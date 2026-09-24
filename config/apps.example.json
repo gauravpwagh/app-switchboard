@@ -1,0 +1,39 @@
+{
+  "apps": [
+    {
+      "id": "sales-dashboard",
+      "name": "Sales dashboard",
+      "type": "streamlit",
+      "path": "C:/Projects/sales-dashboard",
+      "entry": "app.py",
+      "port": 8501,
+      "venv": ".venv"
+    },
+    {
+      "id": "inventory-api",
+      "name": "Inventory API",
+      "type": "flask",
+      "path": "/home/me/projects/inventory",
+      "entry": "app.py",
+      "port": 5000,
+      "venv": "venv",
+      "env": { "FLASK_DEBUG": "1" }
+    },
+    {
+      "id": "crm",
+      "name": "CRM",
+      "type": "django",
+      "path": "/home/me/projects/crm",
+      "port": 8000,
+      "venv": "venv"
+    },
+    {
+      "id": "reports",
+      "name": "Reports (custom command)",
+      "type": "custom",
+      "path": "/home/me/projects/reports",
+      "command": "{python} -m waitress --port={port} reports:app",
+      "port": 9000
+    }
+  ]
+}

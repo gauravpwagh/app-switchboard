@@ -1,0 +1,442 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>App Switchboard</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎛️</text></svg>">
+<style>
+:root {
+  --bg: #E6EAEE; --panel: #F8FAFB; --ink: #18222D; --muted: #5B6875; --line: #CFD7DE;
+  --on: #23875A; --on-soft: #DCEFE4; --wait: #A8630C; --wait-soft: #F6E8D2;
+  --err: #BE3A2B; --err-soft: #F7E0DC; --accent: #2C5BB8; --track: #B7C1CA;
+  --log-bg: #19212A; --log-ink: #D3DCE4;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #141A20; --panel: #1C242C; --ink: #E3E9EF; --muted: #95A3B0; --line: #2D3843;
+    --on: #3DB37A; --on-soft: #183428; --wait: #E0A247; --wait-soft: #3A2D17;
+    --err: #EA6D58; --err-soft: #3E201B; --accent: #7BA4EF; --track: #3B4753;
+    --log-bg: #0F1419; --log-ink: #C8D2DB; color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.5 var(--sans); }
+main { max-width: 980px; margin: 0 auto; padding: 32px 20px 64px; }
+
+.top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 24px; }
+h1 { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01em; margin: 0; }
+.sub { margin: 4px 0 0; color: var(--muted); }
+.top-actions { display: flex; gap: 8px; }
+
+.btn {
+  font: inherit; font-size: 14px; font-weight: 550; color: var(--ink); background: var(--panel);
+  border: 1px solid var(--line); border-radius: 7px; padding: 6px 12px; cursor: pointer;
+  text-decoration: none; display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--err); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#flash { min-height: 0; }
+.flash { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; background: var(--err-soft); color: var(--err); font-weight: 500; }
+
+.apps { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
+.app + .app { border-top: 1px solid var(--line); }
+.row { display: grid; grid-template-columns: auto minmax(0, 1fr) 180px 390px; align-items: center; gap: 18px; padding: 16px 18px; }
+
+/* The breaker: one big switch per app */
+.switch {
+  width: 60px; height: 32px; border-radius: 32px; border: 0; padding: 0; cursor: pointer;
+  background: var(--track); position: relative; transition: background .2s;
+}
+.switch .knob {
+  position: absolute; top: 3px; left: 3px; width: 26px; height: 26px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.25); transition: transform .2s;
+}
+.switch[aria-checked="true"] .knob { transform: translateX(28px); }
+[data-status="running"] .switch { background: var(--on); }
+[data-status="starting"] .switch { background: var(--wait); }
+[data-status="starting"] .switch .knob { animation: breathe 1.2s ease-in-out infinite; }
+[data-status="exited"] .switch { background: var(--err); }
+.switch:disabled { opacity: .6; cursor: progress; }
+@keyframes breathe { 50% { opacity: .55; } }
+
+.ident { min-width: 0; }
+.name { font-weight: 650; font-size: 16px; display: flex; align-items: center; gap: 8px; }
+.kind { font-size: 12px; font-weight: 550; color: var(--muted); border: 1px solid var(--line); border-radius: 5px; padding: 0 6px; }
+.path { font: 12.5px/1.4 var(--mono); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.state { font-size: 14px; }
+.label { font-weight: 600; }
+[data-status="running"] .label { color: var(--on); }
+[data-status="starting"] .label { color: var(--wait); }
+[data-status="exited"] .label { color: var(--err); }
+[data-status="stopped"] .label { color: var(--muted); }
+.meta { display: block; color: var(--muted); font-size: 13px; }
+.meta.warn { color: var(--wait); }
+
+.actions { display: flex; gap: 6px; justify-content: flex-end; }
+.logbtn { min-width: 98px; justify-content: center; }
+.open[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+
+.logs { padding: 0 18px 18px; }
+.logs pre {
+  margin: 0; background: var(--log-bg); color: var(--log-ink); font: 12.5px/1.5 var(--mono);
+  border-radius: 8px; padding: 12px 14px; height: 300px; overflow: auto; white-space: pre-wrap; word-break: break-word;
+}
+
+.empty { background: var(--panel); border: 1px dashed var(--line); border-radius: 12px; padding: 40px 24px; text-align: center; }
+.empty p { margin: 0 0 16px; color: var(--muted); max-width: 46ch; margin-inline: auto; }
+
+dialog { border: 1px solid var(--line); border-radius: 12px; padding: 0; background: var(--panel); color: var(--ink); width: min(560px, calc(100vw - 32px)); }
+dialog::backdrop { background: rgba(10, 16, 22, .45); }
+form { padding: 22px; display: grid; gap: 14px; }
+form h2 { margin: 0 0 4px; font-size: 19px; }
+.field { display: grid; gap: 4px; }
+.field label { font-weight: 600; font-size: 14px; }
+.field small { color: var(--muted); font-size: 12.5px; }
+.field input, .field select, .field textarea {
+  font: inherit; font-size: 14px; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
+  border-radius: 7px; padding: 7px 10px; width: 100%;
+}
+.field textarea { font-family: var(--mono); font-size: 13px; min-height: 64px; resize: vertical; }
+.pair { display: grid; grid-template-columns: 1fr 120px; gap: 12px; }
+.form-error { color: var(--err); font-weight: 500; margin: 0; }
+.form-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
+.form-actions .spacer { flex: 1; }
+
+@media (max-width: 760px) {
+  .row { grid-template-columns: auto minmax(0, 1fr); row-gap: 10px; }
+  .state { grid-column: 2; }
+  .actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .switch, .switch .knob { transition: none; }
+  [data-status="starting"] .switch .knob { animation: none; }
+}
+</style>
+</head>
+<body>
+<main>
+  <header class="top">
+    <div>
+      <h1>App switchboard</h1>
+      <p class="sub" id="summary">Loading your apps…</p>
+    </div>
+    <div class="top-actions">
+      <button class="btn" id="stopAll">Stop all</button>
+      <button class="btn primary" id="addBtn">Add app</button>
+    </div>
+  </header>
+
+  <div id="flash" role="alert" aria-live="assertive"></div>
+  <ul class="apps" id="apps" hidden></ul>
+  <div class="empty" id="empty" hidden>
+    <p>No apps yet. Add one with its folder, framework and a free port, and it gets a switch here.</p>
+    <button class="btn primary" id="emptyAdd">Add app</button>
+  </div>
+</main>
+
+<dialog id="dlg">
+  <form id="form" method="dialog" novalidate>
+    <h2 id="dlgTitle">Add app</h2>
+    <div class="pair">
+      <div class="field"><label for="f-name">Name</label><input id="f-name" name="name" required placeholder="Sales dashboard"></div>
+      <div class="field"><label for="f-type">Framework</label>
+        <select id="f-type" name="type">
+          <option value="flask">Flask</option><option value="streamlit">Streamlit</option>
+          <option value="django">Django</option><option value="custom">Custom</option>
+        </select>
+      </div>
+    </div>
+    <div class="field">
+      <label for="f-path">App folder</label>
+      <input id="f-path" name="path" required placeholder="C:\Projects\sales-dashboard  or  ~/projects/sales-dashboard">
+      <small>The folder you'd normally cd into before launching.</small>
+    </div>
+    <div class="pair">
+      <div class="field" id="entryField">
+        <label for="f-entry" id="entryLabel">Entry file</label>
+        <input id="f-entry" name="entry">
+        <small id="entryHint"></small>
+      </div>
+      <div class="field"><label for="f-port">Port</label><input id="f-port" name="port" inputmode="numeric" required></div>
+    </div>
+    <div class="field" id="commandField" hidden>
+      <label for="f-command">Command</label>
+      <input id="f-command" name="command" placeholder="{python} -m uvicorn main:app --port {port}">
+      <small>{python} is the app's interpreter, {port} and {host} are filled in for you.</small>
+    </div>
+    <div class="field">
+      <label for="f-venv">Virtualenv folder <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+      <input id="f-venv" name="venv" placeholder=".venv">
+      <small>Relative to the app folder, or a full path. Leave empty to use the switchboard's own Python.</small>
+    </div>
+    <div class="field">
+      <label for="f-env">Environment variables <span style="font-weight:400;color:var(--muted)">(optional)</span></label>
+      <textarea id="f-env" name="env" placeholder="FLASK_DEBUG=1&#10;DATABASE_URL=sqlite:///db.sqlite3"></textarea>
+    </div>
+    <p class="form-error" id="formError" hidden></p>
+    <div class="form-actions">
+      <button type="button" class="btn danger" id="deleteBtn" hidden>Remove app</button>
+      <span class="spacer"></span>
+      <button type="button" class="btn" id="cancelBtn">Cancel</button>
+      <button type="submit" class="btn primary" id="saveBtn">Add app</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const $ = (s, el = document) => el.querySelector(s);
+const KIND = { flask: "Flask", streamlit: "Streamlit", django: "Django", custom: "Custom" };
+const DEFAULT_PORT = { flask: 5000, streamlit: 8501, django: 8000, custom: 9000 };
+const ENTRY = {
+  flask: ["Entry file", "app.py", "File or module, e.g. app.py or myapp:create_app()"],
+  streamlit: ["Entry file", "app.py", "The script you pass to streamlit run"],
+  django: ["Manage script", "manage.py", "Usually manage.py"],
+};
+const LABEL = { running: "Running", starting: "Starting", stopped: "Stopped", exited: "Stopped unexpectedly" };
+
+let apps = [];
+const rows = new Map();
+const busy = new Set();
+let editingId = null;
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, { headers: { "Content-Type": "application/json" }, ...opts });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `Request failed (${res.status})`);
+  return data;
+}
+
+let flashTimer;
+function flash(msg) {
+  const box = $("#flash");
+  box.innerHTML = "";
+  if (!msg) return;
+  const p = document.createElement("p");
+  p.className = "flash"; p.textContent = msg;
+  box.append(p);
+  clearTimeout(flashTimer);
+  flashTimer = setTimeout(() => (box.innerHTML = ""), 8000);
+}
+
+function fmtUptime(s) {
+  if (s == null) return "";
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (d) return `${d} d ${h % 24} h`;
+  if (h) return `${h} h ${m % 60} min`;
+  return `${m} min`;
+}
+
+function makeRow(id) {
+  const li = document.createElement("li");
+  li.className = "app";
+  li.innerHTML = `
+    <div class="row">
+      <button class="switch" role="switch"><span class="knob"></span></button>
+      <div class="ident">
+        <div class="name"><span class="n"></span><span class="kind"></span></div>
+        <div class="path"></div>
+      </div>
+      <div class="state"><span class="label"></span><span class="meta"></span></div>
+      <div class="actions">
+        <a class="btn open" target="_blank" rel="noopener"></a>
+        <button class="btn restart">Restart</button>
+        <button class="btn logbtn" aria-expanded="false">Logs</button>
+        <button class="btn edit">Edit</button>
+      </div>
+    </div>
+    <div class="logs" hidden><pre tabindex="0"></pre></div>`;
+  $(".switch", li).addEventListener("click", () => toggle(id));
+  $(".restart", li).addEventListener("click", () => act(id, "restart"));
+  $(".logbtn", li).addEventListener("click", () => toggleLogs(id));
+  $(".edit", li).addEventListener("click", () => openDialog(apps.find(a => a.id === id)));
+  const pre = $(".logs pre", li);
+  pre.addEventListener("scroll", () => {
+    pre.dataset.stick = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24 ? "1" : "";
+  });
+  return li;
+}
+
+function updateRow(li, a) {
+  const on = a.status === "running" || a.status === "starting";
+  const pending = busy.has(a.id);
+  li.dataset.status = a.status;
+  const sw = $(".switch", li);
+  sw.setAttribute("aria-checked", String(on));
+  sw.setAttribute("aria-label", `${on ? "Stop" : "Start"} ${a.name}`);
+  sw.disabled = pending;
+  $(".n", li).textContent = a.name;
+  $(".kind", li).textContent = KIND[a.type] || a.type;
+  $(".path", li).textContent = a.path;
+  $(".path", li).title = a.command_preview;
+  $(".label", li).textContent = pending ? "Working…" : LABEL[a.status];
+
+  const meta = $(".meta", li);
+  meta.classList.remove("warn");
+  if (a.status === "running") meta.textContent = `Up ${fmtUptime(a.uptime)}${a.memory_mb != null ? `, ${a.memory_mb} MB` : ""}`;
+  else if (a.status === "starting") meta.textContent = `Waiting for port ${a.port}`;
+  else if (a.status === "exited") meta.textContent = "Open logs to see why";
+  else if (a.port_busy) { meta.textContent = `Port ${a.port} is used by another program`; meta.classList.add("warn"); }
+  else meta.textContent = `Port ${a.port}`;
+
+  const open = $(".open", li);
+  open.href = a.url;
+  open.textContent = `Open :${a.port}`;
+  open.setAttribute("aria-disabled", String(a.status !== "running"));
+  $(".restart", li).disabled = pending || !on;
+  const edit = $(".edit", li);
+  edit.disabled = on;
+  edit.title = on ? "Stop the app to edit it" : "";
+}
+
+function render() {
+  const list = $("#apps");
+  $("#empty").hidden = apps.length > 0;
+  list.hidden = apps.length === 0;
+  const running = apps.filter(a => a.status === "running").length;
+  $("#summary").textContent = apps.length
+    ? `${running} of ${apps.length} ${apps.length === 1 ? "app" : "apps"} running`
+    : "Start and stop your local apps without a terminal.";
+
+  const ids = new Set(apps.map(a => a.id));
+  for (const [id, li] of rows) if (!ids.has(id)) { li.remove(); rows.delete(id); }
+  apps.forEach(a => {
+    let li = rows.get(a.id);
+    if (!li) { li = makeRow(a.id); rows.set(a.id, li); }
+    list.append(li);          // keeps config order; moving an existing node is cheap
+    updateRow(li, a);
+  });
+}
+
+async function refresh() {
+  try {
+    apps = (await api("/api/apps")).apps;
+    render();
+    for (const [id, li] of rows) if (!$(".logs", li).hidden) loadLogs(id);
+  } catch (e) {
+    $("#summary").textContent = "Can't reach the switchboard. Is admin.py still running?";
+  }
+}
+
+async function act(id, action) {
+  busy.add(id); render();
+  try { await api(`/api/apps/${id}/${action}`, { method: "POST" }); flash(""); }
+  catch (e) { flash(e.message); }
+  finally { busy.delete(id); await refresh(); }
+}
+
+function toggle(id) {
+  const a = apps.find(x => x.id === id);
+  act(id, a.status === "running" || a.status === "starting" ? "stop" : "start");
+}
+
+async function loadLogs(id) {
+  const pre = $(".logs pre", rows.get(id));
+  try {
+    const { log } = await api(`/api/apps/${id}/logs`);
+    pre.textContent = log || "Nothing logged yet. Start the app to see its output here.";
+    if (pre.dataset.stick) pre.scrollTop = pre.scrollHeight;
+  } catch (e) { pre.textContent = e.message; }
+}
+
+function toggleLogs(id) {
+  const li = rows.get(id), panel = $(".logs", li), btn = $(".logbtn", li);
+  panel.hidden = !panel.hidden;
+  btn.setAttribute("aria-expanded", String(!panel.hidden));
+  btn.textContent = panel.hidden ? "Logs" : "Hide logs";
+  if (!panel.hidden) { $("pre", panel).dataset.stick = "1"; loadLogs(id); }
+}
+
+/* ---------- add / edit dialog ---------- */
+const dlg = $("#dlg"), form = $("#form");
+const F = (n) => form.elements.namedItem(n);
+
+function nextFreePort(type) {
+  const used = new Set(apps.map(a => Number(a.port)));
+  let p = DEFAULT_PORT[type];
+  while (used.has(p)) p++;
+  return p;
+}
+
+function syncTypeFields(changedByUser) {
+  const type = F("type").value;
+  const custom = type === "custom";
+  $("#entryField").hidden = custom;
+  $("#commandField").hidden = !custom;
+  if (!custom) {
+    const [label, ph, hint] = ENTRY[type];
+    $("#entryLabel").textContent = label;
+    F("entry").placeholder = ph;
+    $("#entryHint").textContent = hint;
+  }
+  if (!editingId && changedByUser) F("port").value = nextFreePort(type);
+}
+
+function openDialog(a) {
+  editingId = a ? a.id : null;
+  form.reset();
+  $("#formError").hidden = true;
+  $("#dlgTitle").textContent = a ? `Edit ${a.name}` : "Add app";
+  $("#saveBtn").textContent = a ? "Save changes" : "Add app";
+  $("#deleteBtn").hidden = !a;
+  if (a) {
+    for (const k of ["name", "type", "path", "port", "entry", "venv", "command"]) F(k).value = a[k] ?? "";
+    F("env").value = Object.entries(a.env || {}).map(([k, v]) => `${k}=${v}`).join("\n");
+  } else {
+    F("type").value = "flask";
+    F("port").value = nextFreePort("flask");
+  }
+  syncTypeFields(false);
+  dlg.showModal();
+  F("name").focus();
+}
+
+F("type").addEventListener("change", () => syncTypeFields(true));
+$("#cancelBtn").addEventListener("click", () => dlg.close());
+$("#addBtn").addEventListener("click", () => openDialog(null));
+$("#emptyAdd").addEventListener("click", () => openDialog(null));
+
+form.addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const body = Object.fromEntries(new FormData(form));
+  try {
+    await api(editingId ? `/api/apps/${editingId}` : "/api/apps", {
+      method: editingId ? "PUT" : "POST", body: JSON.stringify(body),
+    });
+    dlg.close();
+    await refresh();
+  } catch (e) {
+    const err = $("#formError");
+    err.textContent = e.message; err.hidden = false;
+  }
+});
+
+$("#deleteBtn").addEventListener("click", async () => {
+  const a = apps.find(x => x.id === editingId);
+  if (!confirm(`Remove ${a.name} from the switchboard? Its files are not touched.`)) return;
+  try { await api(`/api/apps/${editingId}`, { method: "DELETE" }); dlg.close(); await refresh(); }
+  catch (e) { const err = $("#formError"); err.textContent = e.message; err.hidden = false; }
+});
+
+$("#stopAll").addEventListener("click", async () => {
+  if (!apps.some(a => a.status === "running" || a.status === "starting")) return flash("Nothing is running.");
+  if (!confirm("Stop every running app?")) return;
+  try { await api("/api/stop-all", { method: "POST" }); flash(""); } catch (e) { flash(e.message); }
+  refresh();
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
