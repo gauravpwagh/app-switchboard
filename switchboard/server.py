@@ -477,6 +477,43 @@ def stop_all():
     return jsonify(ok=True)
 
 
+# Runs in a child process: Tk must own its main thread (macOS insists), which Flask's
+# request threads can't give it. Prints the chosen folder as JSON, "" if cancelled.
+_PICK_FOLDER_SCRIPT = """
+import json, sys, tkinter
+from tkinter import filedialog
+root = tkinter.Tk()
+root.withdraw()
+root.attributes("-topmost", True)  # show above the browser window
+path = filedialog.askdirectory(parent=root, initialdir=sys.argv[1] or None, title="Choose the app folder")
+print(json.dumps(path or ""))
+"""
+picker_lock = threading.Lock()
+
+
+@server.post("/api/pick-folder")
+def pick_folder():
+    if request.remote_addr not in ("127.0.0.1", "::1"):
+        raise ValueError("The folder picker opens on the computer running the switchboard, "
+                         "so it only works from that computer. Type the path instead.")
+    if not picker_lock.acquire(blocking=False):
+        raise ValueError("A folder picker is already open. Check your taskbar.")
+    try:
+        start = str((request.get_json(silent=True) or {}).get("initial", "")).strip().strip('"')
+        start = str(Path(start).expanduser()) if start and Path(start).expanduser().is_dir() else ""
+        kwargs = {"creationflags": subprocess.CREATE_NO_WINDOW} if IS_WINDOWS else {}
+        result = subprocess.run([sys.executable, "-c", _PICK_FOLDER_SCRIPT, start],
+                                capture_output=True, text=True, **kwargs)
+        try:
+            path = json.loads(result.stdout.strip().splitlines()[-1])
+        except (IndexError, json.JSONDecodeError):
+            return jsonify(error="No folder picker is available on this system (Python's tkinter "
+                                 "is missing). Type the path instead."), 501
+    finally:
+        picker_lock.release()
+    return jsonify(path=str(Path(path)) if path else None)
+
+
 @server.get("/api/apps/<app_id>/logs")
 def logs(app_id):
     find_app(app_id)

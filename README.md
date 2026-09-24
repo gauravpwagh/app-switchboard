@@ -46,7 +46,7 @@ Click **Add app** and fill in:
 
 | Field | Example | Notes |
 |---|---|---|
-| App folder | `C:\Projects\sales` | The folder you'd normally `cd` into |
+| App folder | `C:\Projects\sales` | The folder you'd normally `cd` into. **Browse…** opens your system's folder picker. |
 | Framework | Streamlit | Flask, Streamlit, Django or Custom |
 | Entry file | `app.py` | For Flask this can also be `myapp:create_app()` |
 | Port | 8501 | Each app needs its own port. The next free one is suggested. |

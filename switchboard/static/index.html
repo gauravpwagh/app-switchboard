@@ -107,6 +107,8 @@ form h2 { margin: 0 0 4px; font-size: 19px; }
   border-radius: 7px; padding: 7px 10px; width: 100%;
 }
 .field textarea { font-family: var(--mono); font-size: 13px; min-height: 64px; resize: vertical; }
+.with-btn { display: flex; gap: 8px; }
+.with-btn input { flex: 1; min-width: 0; }
 .pair { display: grid; grid-template-columns: 1fr 120px; gap: 12px; }
 .form-error { color: var(--err); font-weight: 500; margin: 0; }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
@@ -158,7 +160,10 @@ form h2 { margin: 0 0 4px; font-size: 19px; }
     </div>
     <div class="field">
       <label for="f-path">App folder</label>
-      <input id="f-path" name="path" required placeholder="C:\Projects\sales-dashboard  or  ~/projects/sales-dashboard">
+      <div class="with-btn">
+        <input id="f-path" name="path" required placeholder="C:\Projects\sales-dashboard  or  ~/projects/sales-dashboard">
+        <button type="button" class="btn" id="browseBtn">Browse…</button>
+      </div>
       <small>The folder you'd normally cd into before launching.</small>
     </div>
     <div class="pair">
@@ -400,6 +405,25 @@ function openDialog(a) {
   dlg.showModal();
   F("name").focus();
 }
+
+$("#browseBtn").addEventListener("click", async () => {
+  const btn = $("#browseBtn");
+  btn.disabled = true; btn.textContent = "Choosing…";
+  $("#formError").hidden = true;
+  try {
+    const { path } = await api("/api/pick-folder", { method: "POST", body: JSON.stringify({ initial: F("path").value }) });
+    if (path) {
+      F("path").value = path;
+      if (!F("name").value.trim()) F("name").value = path.split(/[\\/]/).filter(Boolean).pop() || "";
+    }
+  } catch (e) {
+    const err = $("#formError");
+    err.textContent = e.message; err.hidden = false;
+  } finally {
+    btn.disabled = false; btn.textContent = "Browse…";
+    F("path").focus();
+  }
+});
 
 F("type").addEventListener("change", () => syncTypeFields(true));
 $("#cancelBtn").addEventListener("click", () => dlg.close());
