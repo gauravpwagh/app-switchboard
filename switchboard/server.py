@@ -156,6 +156,21 @@ def port_in_use(port: int, host: str = "127.0.0.1") -> bool:
         return s.connect_ex((host, int(port))) == 0
 
 
+def is_shared(app: dict) -> bool:
+    return (app.get("host") or "") in ("0.0.0.0", "::")
+
+
+def lan_ip() -> str | None:
+    """This computer's address on the local network, as other devices would use it."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))  # sends nothing; just picks the outgoing interface
+            ip = s.getsockname()[0]
+    except OSError:
+        return None
+    return None if ip.startswith("127.") else ip
+
+
 # ---------------------------------------------------------------- commands
 
 def _venv_dir(app: dict) -> Path | None:
@@ -300,7 +315,7 @@ def stop_app(app_id: str) -> None:
         _set_state(app_id, None)
 
 
-def app_status(app: dict) -> dict:
+def app_status(app: dict, ip: str | None = None) -> dict:
     proc = _tracked_process(app["id"])
     entry = _state().get(app["id"])
     host = "localhost" if _probe_host(app) == "127.0.0.1" else _probe_host(app)
@@ -312,6 +327,8 @@ def app_status(app: dict) -> dict:
         "memory_mb": None,
         "port_busy": False,
         "url": f"http://{host}:{app['port']}{app.get('url_path') or '/'}",
+        "shared": is_shared(app),
+        "lan_url": f"http://{ip}:{app['port']}{app.get('url_path') or '/'}" if ip and is_shared(app) else None,
         "command_preview": _command_preview(app),
     }
     if proc:
@@ -419,7 +436,8 @@ def index():
 
 @server.get("/api/apps")
 def list_apps():
-    return jsonify(apps=[app_status(a) for a in load_apps()])
+    ip = lan_ip()
+    return jsonify(apps=[app_status(a, ip) for a in load_apps()], lan_ip=ip)
 
 
 @server.post("/api/apps")
@@ -436,10 +454,12 @@ def add_app():
 @server.put("/api/apps/<app_id>")
 def edit_app(app_id):
     with lock:
-        find_app(app_id)
+        current = find_app(app_id)
         if _tracked_process(app_id):
             raise ValueError("Stop the app before editing it.")
-        updated = {"id": app_id, **validate_app(request.get_json(force=True), existing_id=app_id)}
+        payload = request.get_json(force=True)
+        payload.setdefault("host", current.get("host"))  # the form doesn't edit sharing; keep it
+        updated = {"id": app_id, **validate_app(payload, existing_id=app_id)}
         save_apps([updated if a["id"] == app_id else a for a in load_apps()])
     return jsonify(app=app_status(updated))
 
@@ -453,6 +473,22 @@ def delete_app(app_id):
         save_apps([a for a in load_apps() if a["id"] != app_id])
         _set_state(app_id, None)
     return jsonify(ok=True)
+
+
+@server.post("/api/apps/<app_id>/share")
+def share(app_id):
+    shared = bool((request.get_json(silent=True) or {}).get("shared"))
+    with lock:
+        app = find_app(app_id)
+        if shared and app["type"] == "custom" and "{host}" not in (app.get("command") or ""):
+            raise ValueError("Add {host} to this app's command (for example --host {host}) "
+                             "so the switchboard can control where it listens.")
+        app["host"] = "0.0.0.0" if shared else "127.0.0.1"
+        save_apps([app if a["id"] == app_id else a for a in load_apps()])
+        if _tracked_process(app_id):  # the new address only applies after a restart
+            stop_app(app_id)
+            start_app(app)
+    return jsonify(app=app_status(app, lan_ip()))
 
 
 @server.post("/api/apps/<app_id>/<action>")

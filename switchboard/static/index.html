@@ -49,7 +49,7 @@ h1 { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01
 
 .apps { list-style: none; margin: 0; padding: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; }
 .app + .app { border-top: 1px solid var(--line); }
-.row { display: grid; grid-template-columns: auto minmax(0, 1fr) 180px 390px; align-items: center; gap: 18px; padding: 16px 18px; }
+.row { display: grid; grid-template-columns: auto minmax(0, 1fr) 170px auto; align-items: center; gap: 18px; padding: 16px 18px; }
 
 /* The breaker: one big switch per app */
 .switch {
@@ -85,6 +85,10 @@ h1 { font-size: 28px; line-height: 1.15; font-weight: 700; letter-spacing: -0.01
 .actions { display: flex; gap: 6px; justify-content: flex-end; }
 .logbtn { min-width: 98px; justify-content: center; }
 .open[aria-disabled="true"] { opacity: .45; pointer-events: none; }
+.share { min-width: 78px; justify-content: center; }
+.share[aria-pressed="true"] { background: var(--on-soft); border-color: var(--on); color: var(--on); }
+.lan { font-size: 13px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lan a { color: var(--on); font: 12.5px/1.4 var(--mono); }
 
 .logs { padding: 0 18px 18px; }
 .logs pre {
@@ -114,7 +118,7 @@ form h2 { margin: 0 0 4px; font-size: 19px; }
 .form-actions { display: flex; gap: 8px; justify-content: flex-end; align-items: center; }
 .form-actions .spacer { flex: 1; }
 
-@media (max-width: 760px) {
+@media (max-width: 880px) {
   .row { grid-template-columns: auto minmax(0, 1fr); row-gap: 10px; }
   .state { grid-column: 2; }
   .actions { grid-column: 1 / -1; justify-content: flex-start; flex-wrap: wrap; }
@@ -210,6 +214,7 @@ const ENTRY = {
 const LABEL = { running: "Running", starting: "Starting", stopped: "Stopped", exited: "Stopped unexpectedly" };
 
 let apps = [];
+let lanIp = null;
 const rows = new Map();
 const busy = new Set();
 let editingId = null;
@@ -251,10 +256,12 @@ function makeRow(id) {
       <div class="ident">
         <div class="name"><span class="n"></span><span class="kind"></span></div>
         <div class="path"></div>
+        <div class="lan" hidden>On your network: <a target="_blank" rel="noopener"></a></div>
       </div>
       <div class="state"><span class="label"></span><span class="meta"></span></div>
       <div class="actions">
         <a class="btn open" target="_blank" rel="noopener"></a>
+        <button class="btn share" aria-pressed="false">Share</button>
         <button class="btn restart">Restart</button>
         <button class="btn logbtn" aria-expanded="false">Logs</button>
         <button class="btn edit">Edit</button>
@@ -263,6 +270,7 @@ function makeRow(id) {
     <div class="logs" hidden><pre tabindex="0"></pre></div>`;
   $(".switch", li).addEventListener("click", () => toggle(id));
   $(".restart", li).addEventListener("click", () => act(id, "restart"));
+  $(".share", li).addEventListener("click", () => toggleShare(id));
   $(".logbtn", li).addEventListener("click", () => toggleLogs(id));
   $(".edit", li).addEventListener("click", () => openDialog(apps.find(a => a.id === id)));
   const pre = $(".logs pre", li);
@@ -299,6 +307,17 @@ function updateRow(li, a) {
   open.textContent = `Open :${a.port}`;
   open.setAttribute("aria-disabled", String(a.status !== "running"));
   $(".restart", li).disabled = pending || !on;
+
+  const share = $(".share", li);
+  share.disabled = pending;
+  share.setAttribute("aria-pressed", String(a.shared));
+  share.textContent = a.shared ? "Shared" : "Share";
+  share.title = a.shared ? "Visible to other devices on your network. Click to make it private again."
+                         : "Let other devices on your network open this app";
+  const lan = $(".lan", li), link = $(".lan a", li);
+  lan.hidden = !a.shared;
+  link.href = a.lan_url || "#";
+  link.textContent = a.lan_url || "no network connection found";
   const edit = $(".edit", li);
   edit.disabled = on;
   edit.title = on ? "Stop the app to edit it" : "";
@@ -325,7 +344,7 @@ function render() {
 
 async function refresh() {
   try {
-    apps = (await api("/api/apps")).apps;
+    ({ apps, lan_ip: lanIp } = await api("/api/apps"));
     render();
     for (const [id, li] of rows) if (!$(".logs", li).hidden) loadLogs(id);
   } catch (e) {
@@ -336,6 +355,27 @@ async function refresh() {
 async function act(id, action) {
   busy.add(id); render();
   try { await api(`/api/apps/${id}/${action}`, { method: "POST" }); flash(""); }
+  catch (e) { flash(e.message); }
+  finally { busy.delete(id); await refresh(); }
+}
+
+async function toggleShare(id) {
+  const a = apps.find(x => x.id === id);
+  const on = a.status === "running" || a.status === "starting";
+  if (!a.shared) {
+    const where = lanIp ? `http://${lanIp}:${a.port}` : `this computer's network address on port ${a.port}`;
+    const notes = [
+      `Let other devices on your network open ${a.name} at ${where}?`,
+      "Anyone on the same network can use it. There is no password unless your app has one, so only do this on networks you trust.",
+      "If Windows asks whether to allow Python through the firewall, allow it on private networks.",
+    ];
+    if (a.type === "django") notes.push("Django only answers addresses listed in ALLOWED_HOSTS. Add the address above to settings.py or other devices will get \"Bad Request (400)\".");
+    if (on) notes.push("The app will restart.");
+    if (!confirm(notes.join("\n\n"))) return;
+  } else if (on && !confirm(`Make ${a.name} private again? It will restart.`)) return;
+
+  busy.add(id); render();
+  try { await api(`/api/apps/${id}/share`, { method: "POST", body: JSON.stringify({ shared: !a.shared }) }); flash(""); }
   catch (e) { flash(e.message); }
   finally { busy.delete(id); await refresh(); }
 }
